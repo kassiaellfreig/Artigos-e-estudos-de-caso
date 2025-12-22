@@ -597,9 +597,22 @@ alert icmp any any -> any any (msg:"ICMP Detected - Ping"; sid:1000001; rev:1;)
 
 Modo foreground (debug):
 
+Use este modo **apenas para validar** configuração e regras:
 ```bash
 sudo suricata -c /etc/suricata/suricata.yaml -i eth1
+
 ```
+> ⚠️ **Importante:**
+>
+> * O modo foreground **não deve rodar junto com o serviço systemd**.
+> * Após confirmar que Suricata está funcionando, **encerre o processo** (Ctrl+C) antes de iniciar o serviço.
+> * Isso evita conflitos na interface `eth1` e logs inconsistentes.
+
+---
+## ▶️ Habilitar Suricata como serviço (persistente)
+sudo systemctl enable suricata
+sudo systemctl start suricata
+sudo systemctl status suricata
 
 📌 **Deixe rodando**
 
@@ -860,17 +873,19 @@ Defina sua rede interna (exemplo):
 
 ## ▶️ INICIANDO O ZEEK
 
-Antes de iniciar, limpe estado anterior:
-
-```bash
-sudo zeekctl deploy
-```
-
-Ou manualmente:
+### 🔹 Modo simples (recomendado para o lab)
 
 ```bash
 sudo zeek -i eth1
 ```
+
+> ⚠️ **Importante:**
+>
+> * Este comando inicia o Zeek **na interface de monitoramento**.
+> * O Zeek **não imprime saída na tela**, apenas gera logs em `/opt/zeek/logs/current/`.
+> * **Não use `zeekctl deploy`** neste lab all-in-one: ele é destinado a clusters ou setups complexos, e pode confundir ou gerar erros.
+
+---
 
 📌 O Zeek **não imprime saída na tela**
 Ele escreve logs.
@@ -981,11 +996,12 @@ ET SCAN Possible Nmap Scan
 
 ## ✅ CHECKLIST — PARTE 3
 
-✔ Zeek instalado
-✔ Interface configurada
-✔ Logs sendo gerados
-✔ Tráfego visível
-✔ Capacidade de investigação inicial
+✔ Zeek instalado  
+✔ Interface configurada (eth1 sem IP, modo promiscuous)  
+✔ Zeek iniciado via `sudo zeek -i eth1`  
+✔ Logs sendo gerados em `/opt/zeek/logs/current/`  
+✔ Tráfego visível para investigação inicial  
+✔ Capacidade de correlação com alertas Suricata
 
 ---
 
@@ -1249,6 +1265,11 @@ filebeat.inputs:
     - /var/log/suricata/eve.json
   json.keys_under_root: true
   json.add_error_key: true
+
+- type: log
+  enabled: true
+  paths:
+    - /opt/zeek/logs/current/*.log
 ```
 
 ✔ Sintaxe validada
@@ -1256,29 +1277,31 @@ filebeat.inputs:
 
 ---
 
-### 🔧 INPUT — ZEEK
-
-Adicione abaixo:
-
-```yaml
-- type: log
-  enabled: true
-  paths:
-    - /opt/zeek/logs/current/*.log
-```
-
 ✔ Coleta todos os logs Zeek
 
 ---
 
 ### 🔧 OUTPUT — ELASTICSEARCH
 
+⚠️ **Nota operacional**
+Antes de iniciar o Filebeat, carregue os pipelines e templates:
+
+```bash
+sudo filebeat setup --pipelines
+sudo filebeat setup --template
+```
+
 Confirme:
 
 ```yaml
 output.elasticsearch:
   hosts: ["http://127.0.0.1:9200"]
+  pipeline: "filebeat-<VERSAO>-suricata-pipeline"
 ```
+###⚠️ IMPORTANTE:
+Substitua `<VERSAO>` pela versão exata do Filebeat instalada.
+Exemplo: filebeat-8.11.3-suricata-pipeline
+
 
 ⚠️ **Desabilite Logstash**, se existir:
 
@@ -2105,7 +2128,7 @@ SIEM
 
 ```bash
 sudo systemctl status suricata
-sudo systemctl status zeek
+sudo zeekctl status
 sudo systemctl status elasticsearch
 sudo systemctl status kibana
 sudo systemctl status wazuh-manager
@@ -2197,8 +2220,12 @@ cat /opt/zeek/logs/current/dns.log | grep -E "[a-z0-9]{20,}\."
 
 ### 🔍 Correlacionar no Elastic
 
+⚠️ **Nota de auditoria**
+O nome do campo DNS do Zeek pode variar conforme versão do Filebeat e do pipeline ECS.
+Sempre valide os campos disponíveis no índice antes da investigação.
+
 ```kql
-zeek.dns.query:*
+dns.query:*
 ```
 
 Depois filtrar manualmente por:
@@ -2281,7 +2308,7 @@ DATE=$(date)
 
 echo "[$DATE] Verificando alertas críticos..." >> $LOG
 
-grep -i "severity: high" /var/log/suricata/eve.json >> $LOG
+grep -i '"severity":' /var/log/suricata/eve.json | grep -E '[3-9]' >> $LOG
 ```
 
 Permissão:
